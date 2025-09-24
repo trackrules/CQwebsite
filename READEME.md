@@ -1,1 +1,0 @@
-CopperQuarry Server

@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --background: 222 47% 6%;
+    --foreground: 0 0% 98%;
+    --muted: 223 47% 11%;
+    --muted-foreground: 215 20% 72%;
+    --popover: 223 47% 7%;
+    --popover-foreground: 0 0% 98%;
+    --card: 223 47% 7%;
+    --card-foreground: 0 0% 98%;
+    --border: 223 47% 16%;
+    --input: 223 47% 16%;
+    --primary: 260 83% 66%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 47% 11%;
+    --secondary-foreground: 210 40% 98%;
+    --accent: 180 63% 39%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 48%;
+    --destructive-foreground: 210 40% 98%;
+    --ring: 260 83% 66%;
+    --radius: 0.6rem;
+    --font-sans: "Inter", "system-ui", sans-serif;
+    --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
+  }
+
+  body {
+    @apply bg-background text-foreground min-h-screen font-sans antialiased;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  input,
+  textarea,
+  button,
+  select {
+    font: inherit;
+  }
+}
