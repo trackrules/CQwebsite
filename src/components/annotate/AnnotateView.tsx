@@ -8,6 +8,9 @@ import { MetricsPanel } from "@/components/annotate/MetricsPanel"
 import { SessionControls } from "@/components/annotate/SessionControls"
 import { TimestampGrid, type LabelOption } from "@/components/annotate/TimestampGrid"
 import { VideoPlayer, type VideoHandle, type VideoMetadata } from "@/components/annotate/VideoPlayer"
+import { GooglePhotosDialog } from "@/components/annotate/GooglePhotosDialog"
+import { PhoneUploadDialog } from "@/components/annotate/PhoneUploadDialog"
+import { consumePendingGoogleAuth, exchangeCodeForTokens, getStoredGoogleTokens, storeGoogleTokens, type TokenResponse } from "@/lib/google-oauth"
 import { parseVideoFilename } from "@/lib/filename"
 import { computeVideoKey } from "@/lib/hash"
 import { buildSplitDistances } from "@/lib/splits"
@@ -79,6 +82,256 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
   const [currentTime, setCurrentTime] = useState(0)
   const [parsedMetadata, setParsedMetadata] = useState<ParsedFilename | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [googleTokens, setGoogleTokens] = useState<TokenResponse | null>(null)
+  const [isSourceDialogOpen, setIsSourceDialogOpen] = useState(false)
+  const [isPhoneUploadDialogOpen, setIsPhoneUploadDialogOpen] = useState(false)
+  const [phoneUploadSessionId, setPhoneUploadSessionId] = useState<string | null>(null)
+
+  const uploadServerUrl = (import.meta.env.VITE_UPLOAD_SERVER_URL ?? "http://localhost:3030").trim()
+  const processedPhoneUploads = useRef<Set<string>>(new Set())
+  const phoneUploadTimerRef = useRef<number | null>(null)
+
+  const handleOpenSourcePicker = useCallback(() => {
+    setIsSourceDialogOpen(true)
+  }, [])
+
+  const handleCloseSourceDialog = useCallback(() => {
+    setIsSourceDialogOpen(false)
+  }, [])
+
+  const handleSelectLocal = useCallback(() => {
+    setIsSourceDialogOpen(false)
+    inputRef.current?.click()
+  }, [])
+
+  const handleSelectPhoneUpload = useCallback(() => {
+    setIsSourceDialogOpen(false)
+    setIsPhoneUploadDialogOpen(true)
+  }, [])
+
+  const handlePhoneDialogClose = useCallback(() => {
+    setIsPhoneUploadDialogOpen(false)
+  }, [])
+
+  const handlePhoneSessionStart = useCallback((sessionId: string) => {
+    setPhoneUploadSessionId(sessionId)
+    processedPhoneUploads.current.clear()
+  }, [])
+
+  const handlePhoneSessionEnd = useCallback(() => {
+    setPhoneUploadSessionId(null)
+  }, [])
+
+  const loadFile = useCallback(
+    async (nextFile: File) => {
+      if (fileUrl) {
+        URL.revokeObjectURL(fileUrl)
+      }
+      const objectUrl = URL.createObjectURL(nextFile)
+      setFileUrl(objectUrl)
+      setFile(nextFile)
+      setVideoMeta(null)
+      setCurrentTime(0)
+      setStatusMessage(null)
+
+      const parsed = parseVideoFilename(nextFile.name)
+      setParsedMetadata(parsed)
+
+      let videoKey: string | undefined
+      try {
+        videoKey = await computeVideoKey(nextFile)
+      } catch (error) {
+        console.error("Failed to compute video key", error)
+      }
+
+      let saved: Session | undefined
+      if (videoKey) {
+        saved = await getSession(videoKey)
+      }
+
+      const splitChoice: SplitChoice = saved?.split_choice ?? "quarter"
+      const totalDistance = saved?.distance_total_m ?? parsed.distance ?? DEFAULT_DISTANCE
+      const distances = saved?.distances ?? buildSplitDistances(totalDistance, splitChoice)
+
+      const initialDraft: SessionDraft = {
+        video: nextFile.name,
+        videoKey,
+        athlete: saved?.athlete ?? "",
+        effort_time_s: saved?.effort_time_s ?? 0,
+        split_choice: splitChoice,
+        start_type: saved?.start_type ?? parsed.start_type ?? "ST",
+        distance_total_m: totalDistance,
+        distances,
+        marks_abs: ensureMarks(distances, saved?.marks_abs),
+        fps: saved?.fps ?? 30,
+      }
+
+      setDraft(initialDraft)
+      videoRef.current?.seekTo(0)
+      if (saved) {
+        setStatusMessage("Loaded saved session")
+      }
+    },
+    [fileUrl],
+  )
+
+  useEffect(() => {
+    const stored = getStoredGoogleTokens()
+    if (stored) {
+      setGoogleTokens(stored)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    let cancelled = false
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get("code")
+    const error = url.searchParams.get("error")
+    const stateParam = url.searchParams.get("state")
+    if (!code && !error) {
+      return
+    }
+
+    const finalize = async () => {
+      if (code) {
+        const pending = consumePendingGoogleAuth()
+        if (!pending) {
+          setStatusMessage("Google Photos authorization could not be completed. Please start the sign-in again.")
+        } else if (pending.state && !stateParam) {
+          setStatusMessage("Google Photos authorization failed: state parameter missing. Please retry.")
+        } else if (pending.state && stateParam && pending.state !== stateParam) {
+          setStatusMessage("Google Photos authorization failed: state mismatch. Please retry.")
+        } else {
+          setStatusMessage("Completing Google Photos authorization…")
+          try {
+            const tokens = await exchangeCodeForTokens(code, pending.codeVerifier)
+            if (!cancelled) {
+              storeGoogleTokens(tokens)
+              setGoogleTokens(tokens)
+              setStatusMessage("Google Photos authorization completed. Select a video to import.")
+            }
+          } catch (error) {
+            if (!cancelled) {
+              const message = error instanceof Error ? error.message : String(error)
+              setStatusMessage("Failed to exchange Google Photos code: " + message)
+            }
+          }
+        }
+      } else if (error) {
+        const message = (() => {
+          try {
+            return decodeURIComponent(error)
+          } catch {
+            return error
+          }
+        })()
+        setStatusMessage("Google Photos authorization failed: " + message)
+        consumePendingGoogleAuth()
+      }
+
+      if (cancelled) {
+        return
+      }
+
+      const paramsToStrip = ["code", "scope", "authuser", "prompt", "error", "state"]
+      let didStrip = false
+      for (const param of paramsToStrip) {
+        if (url.searchParams.has(param)) {
+          url.searchParams.delete(param)
+          didStrip = true
+        }
+      }
+
+      if (didStrip) {
+        const cleanedSearch = url.searchParams.toString()
+        const nextUrl = `${url.pathname}${cleanedSearch ? `?${cleanedSearch}` : ""}${url.hash}`
+        window.history.replaceState({}, "", nextUrl)
+      }
+    }
+
+    void finalize()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!phoneUploadSessionId) {
+      if (phoneUploadTimerRef.current) {
+        window.clearInterval(phoneUploadTimerRef.current)
+        phoneUploadTimerRef.current = null
+      }
+      return
+    }
+
+    if (!uploadServerUrl) {
+      return
+    }
+
+    const baseUrl = uploadServerUrl.replace(/\/$/, "")
+    let cancelled = false
+
+    const checkForUploads = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/uploads/${phoneUploadSessionId}`)
+        if (!response.ok) {
+          return
+        }
+        const payload = (await response.json()) as { uploads?: Array<Record<string, any>> }
+        const uploads = Array.isArray(payload.uploads) ? payload.uploads : []
+        const nextUpload = uploads.find((item) => item?.id && !processedPhoneUploads.current.has(item.id))
+        if (!nextUpload) {
+          return
+        }
+        processedPhoneUploads.current.add(nextUpload.id)
+
+        const mediaResponse = await fetch(`${baseUrl}/uploads/${nextUpload.fileName}`)
+        if (!mediaResponse.ok) {
+          throw new Error(`Failed to download upload (${mediaResponse.status})`)
+        }
+
+        const blob = await mediaResponse.blob()
+        if (cancelled) {
+          return
+        }
+
+        const fileName = nextUpload.originalName || nextUpload.fileName || "phone-upload.mp4"
+        const mimeType = nextUpload.mimeType || blob.type || "video/mp4"
+        const remoteFile = new File([blob], fileName, { type: mimeType, lastModified: Date.now() })
+        await loadFile(remoteFile)
+        setStatusMessage(`Received "${fileName}" from phone upload.`)
+        setIsPhoneUploadDialogOpen(false)
+        setIsSourceDialogOpen(false)
+        void fetch(`${baseUrl}/api/uploads/${nextUpload.id}/consume`, { method: "POST" }).catch((error) => {
+          console.warn("Failed to mark phone upload as consumed", error)
+        })
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        console.error("Phone upload fetch failed", error)
+        setStatusMessage(`Failed to fetch phone upload: ${message}`)
+      }
+    }
+
+    void checkForUploads()
+    phoneUploadTimerRef.current = window.setInterval(() => {
+      void checkForUploads()
+    }, 4000)
+
+    return () => {
+      cancelled = true
+      if (phoneUploadTimerRef.current) {
+        window.clearInterval(phoneUploadTimerRef.current)
+        phoneUploadTimerRef.current = null
+      }
+    }
+  }, [loadFile, phoneUploadSessionId, uploadServerUrl])
 
   useEffect(() => {
     return () => {
@@ -88,55 +341,6 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
     }
   }, [fileUrl])
 
-  const loadFile = useCallback(async (nextFile: File) => {
-    if (fileUrl) {
-      URL.revokeObjectURL(fileUrl)
-    }
-    const objectUrl = URL.createObjectURL(nextFile)
-    setFileUrl(objectUrl)
-    setFile(nextFile)
-    setVideoMeta(null)
-    setCurrentTime(0)
-    setStatusMessage(null)
-
-    const parsed = parseVideoFilename(nextFile.name)
-    setParsedMetadata(parsed)
-
-    let videoKey: string | undefined
-    try {
-      videoKey = await computeVideoKey(nextFile)
-    } catch (error) {
-      console.error("Failed to compute video key", error)
-    }
-
-    let saved: Session | undefined
-    if (videoKey) {
-      saved = await getSession(videoKey)
-    }
-
-    const splitChoice: SplitChoice = saved?.split_choice ?? "quarter"
-    const totalDistance = saved?.distance_total_m ?? parsed.distance ?? DEFAULT_DISTANCE
-    const distances = saved?.distances ?? buildSplitDistances(totalDistance, splitChoice)
-
-    const initialDraft: SessionDraft = {
-      video: nextFile.name,
-      videoKey,
-      athlete: saved?.athlete ?? "",
-      effort_time_s: saved?.effort_time_s ?? 0,
-      split_choice: splitChoice,
-      start_type: saved?.start_type ?? parsed.start_type ?? "ST",
-      distance_total_m: totalDistance,
-      distances,
-      marks_abs: ensureMarks(distances, saved?.marks_abs),
-      fps: saved?.fps ?? 30,
-    }
-
-    setDraft(initialDraft)
-    videoRef.current?.seekTo(0)
-    if (saved) {
-      setStatusMessage("Loaded saved session")
-    }
-  }, [fileUrl])
 
   const handleFileSelect = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -144,6 +348,7 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
       if (selected) {
         void loadFile(selected)
       }
+      event.target.value = ""
     },
     [loadFile],
   )
@@ -325,7 +530,7 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
 
   const previousDisplay = useMemo(() => {
     if (!draft || !previousLabel) {
-      return "Previous: â€”"
+      return "Previous: —"
     }
     const { label, value } = previousLabel
     if (label === "Start time") {
@@ -339,9 +544,7 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm text-muted-foreground">
-          {file ? `${file.name}` : "No video loaded"}
-        </div>
+        <div className="text-sm text-muted-foreground">{file ? `${file.name}` : "No video loaded"}</div>
         <div className="flex items-center gap-2">
           <input
             ref={inputRef}
@@ -350,7 +553,8 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
             className="hidden"
             onChange={handleFileSelect}
           />
-          <Button onClick={() => inputRef.current?.click()}>Open Video</Button>
+          <Button onClick={handleOpenSourcePicker}>Open Video</Button>
+          {googleTokens && <span className="text-xs text-purple-200">Google Photos connected</span>}
         </div>
       </div>
       <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-[1.7fr_1fr]">
@@ -361,9 +565,7 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
             <div className="flex flex-wrap items-center gap-3">
               <span className="font-medium">Next: {nextLabelDisplay}</span>
               {draft?.distance_total_m ? (
-                <span className="rounded-full border border-purple-300/60 px-2 py-0.5 text-[11px] sm:text-xs">
-                  Track: {draft.distance_total_m} m
-                </span>
+                <span className="rounded-full border border-purple-300/60 px-2 py-0.5 text-[11px] sm:text-xs">Track: {draft.distance_total_m} m</span>
               ) : null}
               <Button
                 onClick={handleCaptureNext}
@@ -413,6 +615,19 @@ export function AnnotateView({ onPersistSession }: AnnotateViewProps) {
           </div>
         </ScrollArea>
       </div>
+      <GooglePhotosDialog
+        open={isSourceDialogOpen}
+        onClose={handleCloseSourceDialog}
+        onSelectLocal={handleSelectLocal}
+        onSelectPhoneUpload={handleSelectPhoneUpload}
+      />
+      <PhoneUploadDialog
+        open={isPhoneUploadDialogOpen}
+        onClose={handlePhoneDialogClose}
+        onSessionStart={handlePhoneSessionStart}
+        onSessionEnd={handlePhoneSessionEnd}
+        uploadServerUrl={uploadServerUrl}
+      />
     </div>
   )
 }
