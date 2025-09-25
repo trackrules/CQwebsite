@@ -9,10 +9,11 @@ const uploadServerEnv = import.meta.env.VITE_UPLOAD_SERVER_URL ?? "http://localh
 export function PhoneUploadPage() {
   const search = useMemo(() => (typeof window !== "undefined" ? window.location.search : ""), [])
   const sessionId = useMemo(() => new URLSearchParams(search).get("session"), [search])
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [serverUrl, setServerUrl] = useState(uploadServerEnv)
   const [status, setStatus] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [inputKey, setInputKey] = useState(0)
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -20,17 +21,20 @@ export function PhoneUploadPage() {
       setStatus("Missing session information. Re-scan the QR code from the desktop app.")
       return
     }
-    if (!file) {
-      setStatus("Select a video file before uploading.")
+    if (files.length === 0) {
+      setStatus("Select at least one video before uploading.")
       return
     }
     setIsUploading(true)
-    setStatus("Uploading…")
+    setStatus(`Uploading ${files.length} ${files.length === 1 ? "video" : "videos"}…`)
     try {
       const formData = new FormData()
       formData.append("sessionId", sessionId)
-      formData.append("video", file)
-      const response = await fetch(`${serverUrl.replace(/\/$/, "")}/api/uploads`, {
+      files.forEach((item) => {
+        formData.append("video", item)
+      })
+      const baseUrl = serverUrl.replace(/\/$/, "")
+      const response = await fetch(`${baseUrl}/api/uploads`, {
         method: "POST",
         body: formData,
       })
@@ -38,8 +42,10 @@ export function PhoneUploadPage() {
         const text = await response.text()
         throw new Error(`Upload failed: ${response.status} ${text}`)
       }
-      setStatus("Upload complete! You can return to your desktop browser.")
-      setFile(null)
+      const uploadedCount = files.length
+      setStatus(`Uploaded ${uploadedCount} ${uploadedCount === 1 ? "video" : "videos"}! You can return to your desktop browser.`)
+      setFiles([])
+      setInputKey((key) => key + 1)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setStatus(message)
@@ -54,7 +60,7 @@ export function PhoneUploadPage() {
         <header className="space-y-2 text-center">
           <h1 className="text-2xl font-semibold">Cycling Annotator Upload</h1>
           <p className="text-sm text-slate-300">
-            Upload a video from this device. Keep the desktop dialog open so it can download the file automatically.
+            Upload one or more videos from this device. Keep the desktop dialog open so it can download the files automatically.
           </p>
         </header>
         {!sessionId ? (
@@ -65,15 +71,24 @@ export function PhoneUploadPage() {
           <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
             <div className="flex flex-col gap-2">
               <Label htmlFor="video" className="text-sm font-medium text-slate-200">
-                Video file
+                Video files
               </Label>
               <Input
                 id="video"
                 type="file"
                 accept="video/*"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                multiple
+                key={inputKey}
+                onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
                 className="bg-slate-900"
               />
+              {files.length > 0 ? (
+                <ul className="list-disc space-y-1 pl-5 text-[11px] text-slate-300">
+                  {files.map((selectedFile) => (
+                    <li key={`${selectedFile.name}-${selectedFile.lastModified}`}>{selectedFile.name}</li>
+                  ))}
+                </ul>
+              ) : null}
               <span className="text-[11px] text-slate-400">Large uploads depend on your network speed. Keep this page open until the upload completes.</span>
             </div>
             <div className="flex flex-col gap-2">
@@ -90,7 +105,7 @@ export function PhoneUploadPage() {
               <span className="text-[11px] text-slate-400">Example: http://192.168.1.24:3030</span>
             </div>
             <Button type="submit" disabled={isUploading} className="bg-purple-600 text-white hover:bg-purple-500">
-              {isUploading ? "Uploading…" : "Upload video"}
+              {isUploading ? "Uploading…" : files.length > 1 ? "Upload videos" : "Upload video"}
             </Button>
           </form>
         )}

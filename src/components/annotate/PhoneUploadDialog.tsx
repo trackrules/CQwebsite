@@ -7,6 +7,16 @@ import { Input } from "@/components/ui/input"
 
 const DEFAULT_WIDTH = 260
 
+const getDefaultBaseUrl = () => {
+  if (typeof window === "undefined") {
+    return ""
+  }
+  const base = new URL(import.meta.env.BASE_URL, window.location.href)
+  base.search = ""
+  base.hash = ""
+  return base.toString().replace(/\/$/, "")
+}
+
 type PhoneUploadDialogProps = {
   open: boolean
   onClose: () => void
@@ -17,14 +27,7 @@ type PhoneUploadDialogProps = {
 
 export function PhoneUploadDialog({ open, onClose, onSessionStart, onSessionEnd, uploadServerUrl }: PhoneUploadDialogProps) {
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [publicBaseUrl, setPublicBaseUrl] = useState<string>(() => {
-    if (typeof window === "undefined") {
-      return ""
-    }
-    const { protocol, hostname, port } = window.location
-    const safeHostname = hostname === "localhost" ? hostname : hostname
-    return `${protocol}//${safeHostname}${port ? `:${port}` : ""}`
-  })
+  const [publicBaseUrl, setPublicBaseUrl] = useState<string>(getDefaultBaseUrl)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
 
@@ -96,7 +99,7 @@ export function PhoneUploadDialog({ open, onClose, onSessionStart, onSessionEnd,
         <DialogHeader>
           <DialogTitle>Upload from your phone</DialogTitle>
           <p className="text-xs text-muted-foreground">
-            Make sure your computer and phone are on the same network. Replace "localhost" with your computer&rsquo;s LAN IP if your phone cannot load the page.
+            Make sure your computer and phone are on the same network. Replace "localhost" with your computer&rsquo;s LAN IP if your phone cannot load the page. Keep any trailing path when the app is served from a sub-directory.
           </p>
         </DialogHeader>
         <div className="mt-4 flex flex-col gap-4">
@@ -104,7 +107,7 @@ export function PhoneUploadDialog({ open, onClose, onSessionStart, onSessionEnd,
             <span className="text-xs font-medium text-muted-foreground">Desktop base URL</span>
             <Input value={publicBaseUrl} onChange={(event) => setPublicBaseUrl(event.target.value)} spellCheck={false} />
             <span className="text-[11px] text-muted-foreground">
-              Example: <code>http://192.168.1.24:5173</code>
+              Example: <code>http://192.168.1.24:5173</code> or <code>https://user.github.io/repo</code>
             </span>
           </div>
           <div className="flex flex-col items-center gap-2">
@@ -116,7 +119,7 @@ export function PhoneUploadDialog({ open, onClose, onSessionStart, onSessionEnd,
               <img src={qrDataUrl} alt="Upload link QR code" className="h-64 w-64 rounded-lg border border-border bg-white p-3" />
             ) : (
               <div className="flex h-64 w-64 items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
-                Generating QR code…
+                Generating QR code.
               </div>
             )}
             {uploadUrl && (
@@ -131,7 +134,7 @@ export function PhoneUploadDialog({ open, onClose, onSessionStart, onSessionEnd,
           <div className="rounded-md border border-border p-3 text-xs text-muted-foreground">
             <ol className="list-decimal space-y-2 pl-6">
               <li>Scan the QR code with your phone and open the link.</li>
-              <li>Select a video file on your phone and upload it.</li>
+              <li>Select one or more video files on your phone and upload them.</li>
               <li>Keep this dialog open. The video will load automatically when the upload finishes.</li>
             </ol>
           </div>

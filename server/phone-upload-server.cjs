@@ -48,6 +48,7 @@ const upload = multer({
   storage,
   limits: {
     fileSize: 1024 * 1024 * 1024 * 2, // 2 GB cap
+    files: 12,
   },
 })
 
@@ -61,28 +62,33 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" })
 })
 
-app.post("/api/uploads", upload.single("video"), (req, res) => {
+app.post("/api/uploads", upload.any(), (req, res) => {
   const sessionId = req.body?.sessionId
   if (!sessionId) {
     return res.status(400).json({ error: "Missing sessionId" })
   }
-  if (!req.file) {
+  const allowedFields = new Set(["video", "videos", "video[]", "file", "files"])
+  const files = Array.isArray(req.files) ? req.files.filter((file) => allowedFields.has(file.fieldname)) : []
+  if (files.length === 0) {
     return res.status(400).json({ error: "Missing file" })
   }
   const uploads = readUploads()
-  const record = {
-    id: nanoid(12),
-    sessionId,
-    originalName: req.file.originalname,
-    fileName: req.file.filename,
-    mimeType: req.file.mimetype,
-    size: req.file.size,
-    uploadedAt: new Date().toISOString(),
-    consumed: false,
-  }
-  uploads.push(record)
+  const created = files.map((file) => {
+    const record = {
+      id: nanoid(12),
+      sessionId,
+      originalName: file.originalname,
+      fileName: file.filename,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+      consumed: false,
+    }
+    uploads.push(record)
+    return record
+  })
   writeUploads(uploads)
-  res.json({ upload: record })
+  res.json({ uploads: created })
 })
 
 app.get("/api/uploads/:sessionId", (req, res) => {
