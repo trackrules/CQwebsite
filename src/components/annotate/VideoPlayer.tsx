@@ -57,6 +57,7 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
     const fpsRef = useRef(DEFAULT_FPS)
     const durationRef = useRef(0)
     const frameCallbackRef = useRef<FrameCallback | null>(null)
+    const playbackRafRef = useRef<number | null>(null)
     const wasPlayingRef = useRef(false)
 
     const [duration, setDuration] = useState(0)
@@ -149,12 +150,22 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       }
 
       const handleLoadedMetadata = () => {
-        updateDurationFromVideo()
+        const total = updateDurationFromVideo()
         emitTime()
-        const frameCount = Math.max(1, Math.round(durationRef.current * (fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS)))
-        onMetadata?.({ duration: durationRef.current, fps: fpsRef.current, frameCount })
+        const fpsValue = fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS
+        const frameCount = Math.max(1, Math.round(total * fpsValue))
+        onMetadata?.({ duration: total, fps: fpsRef.current, frameCount })
         if (autoPlay) {
           void video.play()
+        }
+      }
+
+      const handleDurationChange = () => {
+        const total = updateDurationFromVideo()
+        if (total > 0) {
+          const fpsValue = fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS
+          const frameCount = Math.max(1, Math.round(total * fpsValue))
+          onMetadata?.({ duration: total, fps: fpsRef.current, frameCount })
         }
       }
 
@@ -162,10 +173,16 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
         emitTime()
       }
 
-      const handlePlay = () => setIsPlaying(true)
-      const handlePause = () => setIsPlaying(false)
+      const handlePlay = () => {
+        setIsPlaying(true)
+      }
+      const handlePause = () => {
+        setIsPlaying(false)
+        emitTime()
+      }
 
       video.addEventListener("loadedmetadata", handleLoadedMetadata)
+      video.addEventListener("durationchange", handleDurationChange)
       video.addEventListener("timeupdate", handleTimeUpdate)
       video.addEventListener("play", handlePlay)
       video.addEventListener("pause", handlePause)
@@ -176,6 +193,7 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
 
       return () => {
         video.removeEventListener("loadedmetadata", handleLoadedMetadata)
+        video.removeEventListener("durationchange", handleDurationChange)
         video.removeEventListener("timeupdate", handleTimeUpdate)
         video.removeEventListener("play", handlePlay)
         video.removeEventListener("pause", handlePause)
@@ -206,6 +224,30 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
         }
       }
     }, [])
+
+    useEffect(() => {
+      if (!isPlaying) {
+        if (playbackRafRef.current !== null) {
+          cancelAnimationFrame(playbackRafRef.current)
+          playbackRafRef.current = null
+        }
+        return
+      }
+
+      const tick = () => {
+        emitTime()
+        playbackRafRef.current = requestAnimationFrame(tick)
+      }
+
+      playbackRafRef.current = requestAnimationFrame(tick)
+
+      return () => {
+        if (playbackRafRef.current !== null) {
+          cancelAnimationFrame(playbackRafRef.current)
+          playbackRafRef.current = null
+        }
+      }
+    }, [emitTime, isPlaying])
 
     useEffect(() => {
       const video = videoRef.current
@@ -335,7 +377,7 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       <div className={cn("flex h-full flex-col gap-2", className)}>
         <div className="relative aspect-video w-full overflow-hidden rounded-lg border-2 border-border bg-black">
           {fileUrl ? (
-            <video ref={videoRef} className="h-full w-full" controls={false} preload="metadata" />
+            <video ref={videoRef} className="h-full w-full" controls={false} preload="metadata" playsInline />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">Select a video file to begin</div>
           )}
@@ -378,6 +420,3 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
 )
 
 VideoPlayer.displayName = "VideoPlayer"
-
-
-
