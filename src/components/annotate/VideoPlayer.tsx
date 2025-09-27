@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { cn, formatSeconds } from "@/lib/utils"
 
 const DEFAULT_FPS = 30
+const TIME_EPSILON = 1e-4
 
 export type VideoHandle = {
   seekTo: (time: number) => void
@@ -57,7 +58,8 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
     const fpsRef = useRef(DEFAULT_FPS)
     const durationRef = useRef(0)
     const frameCallbackRef = useRef<FrameCallback | null>(null)
-    const playbackRafRef = useRef<number | null>(null)
+    const lastTimeRef = useRef(-1)
+    const lastFrameRef = useRef(-1)
     const wasPlayingRef = useRef(false)
 
     const [duration, setDuration] = useState(0)
@@ -76,7 +78,7 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
         return durationRef.current
       }
       const intrinsic = getIntrinsicDuration(video)
-      if (intrinsic > 0 && Math.abs(intrinsic - durationRef.current) > 1e-3) {
+      if (intrinsic > 0 && Math.abs(intrinsic - durationRef.current) > TIME_EPSILON) {
         durationRef.current = intrinsic
         setDuration(intrinsic)
       }
@@ -90,7 +92,19 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       }
       updateDurationFromVideo()
       const time = video.currentTime
+      if (!Number.isFinite(time)) {
+        return
+      }
       const index = computeFrameIndex(time, fpsRef.current)
+      if (
+        lastFrameRef.current === index &&
+        lastTimeRef.current !== -1 &&
+        Math.abs(time - lastTimeRef.current) < TIME_EPSILON
+      ) {
+        return
+      }
+      lastTimeRef.current = time
+      lastFrameRef.current = index
       setCurrentTime(time)
       setFrameIndex(index)
       onTimeChange?.(time, index)
@@ -173,9 +187,7 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
         emitTime()
       }
 
-      const handlePlay = () => {
-        setIsPlaying(true)
-      }
+      const handlePlay = () => setIsPlaying(true)
       const handlePause = () => {
         setIsPlaying(false)
         emitTime()
@@ -226,28 +238,18 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
     }, [])
 
     useEffect(() => {
-      if (!isPlaying) {
-        if (playbackRafRef.current !== null) {
-          cancelAnimationFrame(playbackRafRef.current)
-          playbackRafRef.current = null
-        }
-        return
-      }
-
+      let frame: number | null = null
       const tick = () => {
         emitTime()
-        playbackRafRef.current = requestAnimationFrame(tick)
+        frame = requestAnimationFrame(tick)
       }
-
-      playbackRafRef.current = requestAnimationFrame(tick)
-
+      frame = requestAnimationFrame(tick)
       return () => {
-        if (playbackRafRef.current !== null) {
-          cancelAnimationFrame(playbackRafRef.current)
-          playbackRafRef.current = null
+        if (frame !== null) {
+          cancelAnimationFrame(frame)
         }
       }
-    }, [emitTime, isPlaying])
+    }, [emitTime])
 
     useEffect(() => {
       const video = videoRef.current
@@ -258,6 +260,8 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       video.src = fileUrl
       video.load()
       wasPlayingRef.current = false
+      lastTimeRef.current = -1
+      lastFrameRef.current = -1
       requestAnimationFrame(() => emitTime())
     }, [emitTime, fileUrl])
 
