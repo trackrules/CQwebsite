@@ -16,6 +16,7 @@ import { cn, formatSeconds } from "@/lib/utils"
 
 const DEFAULT_FPS = 30
 const TIME_EPSILON = 1e-4
+const POLL_INTERVAL_MS = 50
 
 export type VideoHandle = {
   seekTo: (time: number) => void
@@ -72,25 +73,36 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       return Math.max(0, Math.round(time * effectiveFps))
     }, [])
 
-    const updateDurationFromVideo = useCallback(() => {
-      const video = videoRef.current
-      if (!video) {
-        return durationRef.current
-      }
-      const intrinsic = getIntrinsicDuration(video)
-      if (intrinsic > 0 && Math.abs(intrinsic - durationRef.current) > TIME_EPSILON) {
-        durationRef.current = intrinsic
-        setDuration(intrinsic)
-      }
-      return durationRef.current
-    }, [])
+    const emitTime = useCallback(
+      (time: number, index: number) => {
+        lastTimeRef.current = time
+        lastFrameRef.current = index
+        setCurrentTime(time)
+        setFrameIndex(index)
+        onTimeChange?.(time, index)
+        if (typeof window !== "undefined") {
+          ;(window as any).__annotateCurrentTime = time
+          window.dispatchEvent(new CustomEvent("annotate:time", { detail: { time, frameIndex: index } }))
+        }
+      },
+      [onTimeChange],
+    )
 
-    const emitTime = useCallback(() => {
+    const updateFromVideo = useCallback(() => {
       const video = videoRef.current
       if (!video) {
         return
       }
-      updateDurationFromVideo()
+
+      const durationValue = getIntrinsicDuration(video)
+      if (durationValue > 0 && Math.abs(durationValue - durationRef.current) > TIME_EPSILON) {
+        durationRef.current = durationValue
+        setDuration(durationValue)
+        const fpsValue = fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS
+        const frameCount = Math.max(1, Math.round(durationValue * fpsValue))
+        onMetadata?.({ duration: durationValue, fps: fpsRef.current, frameCount })
+      }
+
       const time = video.currentTime
       if (!Number.isFinite(time)) {
         return
@@ -103,31 +115,21 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       ) {
         return
       }
-      lastTimeRef.current = time
-      lastFrameRef.current = index
-      setCurrentTime(time)
-      setFrameIndex(index)
-      onTimeChange?.(time, index)
-      if (typeof window !== "undefined") {
-        ;(window as any).__annotateCurrentTime = time
-        window.dispatchEvent(new CustomEvent("annotate:time", { detail: { time, frameIndex: index } }))
-      }
-    }, [computeFrameIndex, onTimeChange, updateDurationFromVideo])
+      emitTime(time, index)
+    }, [computeFrameIndex, emitTime, onMetadata])
 
     const seekTo = useCallback(
       (time: number) => {
         const video = videoRef.current
         if (!video) return
-        const updatedTotal = updateDurationFromVideo()
-        const fallback = getIntrinsicDuration(video)
-        const limit = updatedTotal > 0 ? updatedTotal : fallback
+        const limit = durationRef.current > 0 ? durationRef.current : getIntrinsicDuration(video)
         const clamped = clamp(time, 0, limit > 0 ? limit : Number.isFinite(video.duration) ? video.duration : 0)
         if (video.currentTime !== clamped) {
           video.currentTime = clamped
         }
-        emitTime()
+        updateFromVideo()
       },
-      [emitTime, updateDurationFromVideo],
+      [updateFromVideo],
     )
 
     const pause = useCallback(() => {
@@ -164,40 +166,23 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       }
 
       const handleLoadedMetadata = () => {
-        const total = updateDurationFromVideo()
-        emitTime()
-        const fpsValue = fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS
-        const frameCount = Math.max(1, Math.round(total * fpsValue))
-        onMetadata?.({ duration: total, fps: fpsRef.current, frameCount })
+        durationRef.current = 0
+        updateFromVideo()
         if (autoPlay) {
           void video.play()
         }
       }
 
-      const handleDurationChange = () => {
-        const total = updateDurationFromVideo()
-        if (total > 0) {
-          const fpsValue = fpsRef.current > 0 ? fpsRef.current : DEFAULT_FPS
-          const frameCount = Math.max(1, Math.round(total * fpsValue))
-          onMetadata?.({ duration: total, fps: fpsRef.current, frameCount })
-        }
-      }
-
-      const handleTimeUpdate = () => {
-        emitTime()
-      }
-
       const handlePlay = () => setIsPlaying(true)
       const handlePause = () => {
         setIsPlaying(false)
-        emitTime()
+        updateFromVideo()
       }
 
       video.addEventListener("loadedmetadata", handleLoadedMetadata)
-      video.addEventListener("durationchange", handleDurationChange)
-      video.addEventListener("timeupdate", handleTimeUpdate)
       video.addEventListener("play", handlePlay)
       video.addEventListener("pause", handlePause)
+      video.addEventListener("timeupdate", updateFromVideo)
 
       if (video.readyState >= 1) {
         handleLoadedMetadata()
@@ -205,12 +190,11 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
 
       return () => {
         video.removeEventListener("loadedmetadata", handleLoadedMetadata)
-        video.removeEventListener("durationchange", handleDurationChange)
-        video.removeEventListener("timeupdate", handleTimeUpdate)
         video.removeEventListener("play", handlePlay)
         video.removeEventListener("pause", handlePause)
+        video.removeEventListener("timeupdate", updateFromVideo)
       }
-    }, [autoPlay, emitTime, onMetadata, updateDurationFromVideo])
+    }, [autoPlay, updateFromVideo])
 
     useEffect(() => {
       const video = videoRef.current
@@ -238,18 +222,13 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
     }, [])
 
     useEffect(() => {
-      let frame: number | null = null
-      const tick = () => {
-        emitTime()
-        frame = requestAnimationFrame(tick)
-      }
-      frame = requestAnimationFrame(tick)
+      const interval = window.setInterval(() => {
+        updateFromVideo()
+      }, POLL_INTERVAL_MS)
       return () => {
-        if (frame !== null) {
-          cancelAnimationFrame(frame)
-        }
+        window.clearInterval(interval)
       }
-    }, [emitTime])
+    }, [updateFromVideo])
 
     useEffect(() => {
       const video = videoRef.current
@@ -262,8 +241,8 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       wasPlayingRef.current = false
       lastTimeRef.current = -1
       lastFrameRef.current = -1
-      requestAnimationFrame(() => emitTime())
-    }, [emitTime, fileUrl])
+      updateFromVideo()
+    }, [fileUrl, updateFromVideo])
 
     useEffect(() => {
       const handleKeydown = (event: KeyboardEvent) => {
