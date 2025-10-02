@@ -25,6 +25,7 @@
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "fit-file-parser": "^1.21.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.544.0",
     "multer": "^2.0.2",

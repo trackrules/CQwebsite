@@ -1,4 +1,4 @@
-import type { ChangeEvent } from "react"
+import type { ChangeEvent, ReactNode } from "react"
 import {
   forwardRef,
   useCallback,
@@ -37,6 +37,7 @@ type Props = {
   onMetadata?: (meta: VideoMetadata) => void
   onTimeChange?: (time: number, frameIndex: number) => void
   className?: string
+  overlay?: ReactNode
 }
 
 type FrameCallback = number
@@ -54,7 +55,7 @@ const getIntrinsicDuration = (video: HTMLVideoElement): number => {
 }
 
 export const VideoPlayer = forwardRef<VideoHandle, Props>(
-  ({ fileUrl, autoPlay = false, onMetadata, onTimeChange, className }, ref) => {
+  ({ fileUrl, autoPlay = false, onMetadata, onTimeChange, className, overlay }, ref) => {
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const fpsRef = useRef(DEFAULT_FPS)
     const durationRef = useRef(0)
@@ -360,7 +361,10 @@ export const VideoPlayer = forwardRef<VideoHandle, Props>(
       <div className={cn("flex h-full flex-col gap-2", className)}>
         <div className="relative aspect-video w-full overflow-hidden rounded-lg border-2 border-border bg-black">
           {fileUrl ? (
-            <video ref={videoRef} className="h-full w-full" controls={false} preload="metadata" playsInline />
+            <>
+              <video ref={videoRef} className="h-full w-full" controls={false} preload="metadata" playsInline />
+              {overlay ? <div className="pointer-events-none absolute inset-0">{overlay}</div> : null}
+            </>
           ) : (
             <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">Select a video file to begin</div>
           )}

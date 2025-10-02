@@ -5,13 +5,17 @@ export type Session = {
   video: string
   videoKey: string
   athlete: string
-  effort_time_s: number
   split_choice: SplitChoice
   start_type: StartType
   distance_total_m: number
   distances: number[]
   marks_abs: Record<string, number | null>
   fps: number
+  date_iso: string | null
+  time_of_day: string | null
+  group: string | null
+  riders: string[]
+  rep: number | null
 }
 
 export type SessionMetadata = {
@@ -23,6 +27,7 @@ export type SessionMetadata = {
 
 export type ParsedFilename = {
   date_iso: string | null
+  time_of_day: string | null
   group: string | null
   riders: string[]
   start_type: StartType | null

@@ -7,7 +7,6 @@ const sessionA: Session = {
   video: "250721-SPDev-Kaio-ST-250-1.mp4",
   videoKey: "keyA",
   athlete: "Kaio",
-  effort_time_s: 0,
   split_choice: "quarter",
   start_type: "ST",
   distance_total_m: 250,
@@ -20,6 +19,11 @@ const sessionA: Session = {
     "250": 19.2,
   },
   fps: 60,
+  date_iso: null,
+  time_of_day: null,
+  group: null,
+  riders: [],
+  rep: null,
 }
 
 const sessionB: Session = {

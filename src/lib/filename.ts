@@ -15,6 +15,7 @@ export function parseVideoFilename(fileName: string): ParsedFilename {
   if (!match?.groups) {
     return {
       date_iso: null,
+      time_of_day: null,
       group: null,
       riders: [],
       start_type: null,
@@ -45,6 +46,7 @@ export function parseVideoFilename(fileName: string): ParsedFilename {
 
   return {
     date_iso: dateIso,
+    time_of_day: null,
     group: groupName,
     riders: ridersList,
     start_type: mapped,

@@ -7,6 +7,7 @@ describe("parseVideoFilename", () => {
     const result = parseVideoFilename("250721-SPDev-Kaio+Mateo-ST-250-1.mp4")
     expect(result).toEqual({
       date_iso: "2025-07-21",
+      time_of_day: null,
       group: "SPDev",
       riders: ["Kaio", "Mateo"],
       start_type: "ST",
@@ -19,6 +20,7 @@ describe("parseVideoFilename", () => {
     const result = parseVideoFilename("randomfile.mp4")
     expect(result).toEqual({
       date_iso: null,
+      time_of_day: null,
       group: null,
       riders: [],
       start_type: null,
